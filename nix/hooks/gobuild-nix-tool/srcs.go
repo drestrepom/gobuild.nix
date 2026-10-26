@@ -66,6 +66,11 @@ func copyFile(src, dst string, modGlob string, replacements map[string]string) e
 		if err != nil {
 			return err
 		}
+		// Only module files: a go.mod, or a <version>.mod of the proxy layout
+		// (cache/download/<module>/@v/). A module's sources may ship other
+		// *.mod files (cuelang.org/go has cue.mod in its testdata) that aren't
+		// go.mod syntax.
+		isMod = isMod && (filepath.Base(src) == "go.mod" || filepath.Base(filepath.Dir(src)) == "@v")
 
 		if isMod {
 			// Replace go.mod versions with build input versions
