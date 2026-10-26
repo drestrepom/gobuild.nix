@@ -100,10 +100,68 @@ in
 
           # Third-party modules each workspace `use` module needs, by its
           # directory relative to go.work (see workspace.go in the generator).
-          workspace = mapAttrs (dir: ws: {
-            require = map (goPackagePath: final.${goPackagePath}) (ws.require or [ ]);
-            testRequire = map (goPackagePath: final.${goPackagePath}) (ws.testRequire or [ ]);
-          }) (lockFile.workspace or { });
+          #
+          # `proxy` is a GOPROXY (file://) to run Go in workspace mode on that
+          # module without network: the original sources (zip, mod, info) of
+          # `sources` plus the go.mod files of the whole graph (`modGraph`).
+          # Original, not the rewritten go.mod of the module derivations: the
+          # checkout's go.sum verifies them.
+          workspace = mapAttrs (
+            dir: ws:
+            let
+              sources = map (
+                goPackagePath:
+                final.fetchers.fetchModuleProxy {
+                  inherit goPackagePath;
+                  inherit (lockFile.locked.${goPackagePath}) version hash;
+                }
+              ) (ws.sources or [ ]);
+            in
+            {
+              require = map (goPackagePath: final.${goPackagePath}) (ws.require or [ ]);
+              testRequire = map (goPackagePath: final.${goPackagePath}) (ws.testRequire or [ ]);
+              inherit sources;
+              proxy = final.callPackage (
+                { runCommand, lndir }:
+                runCommand "go-proxy-${baseNameOf dir}" { nativeBuildInputs = [ lndir ]; } ''
+                  mkdir -p $out
+                  ${lib.concatMapStrings (src: ''
+                    lndir -silent ${src}/cache/download $out
+                  '') sources}
+                  lndir -silent ${final.modGraph} $out
+                ''
+              ) { };
+            }
+          ) (lockFile.workspace or { });
+
+          # The go.mod files Go reads to resolve the workspace graph, including
+          # versions MVS doesn't select (see graph.go in the generator). One
+          # fixed-output derivation, without the sources.
+          modGraph = final.callPackage (
+            {
+              stdenvNoCC,
+              curl,
+              cacert,
+            }:
+            stdenvNoCC.mkDerivation {
+              name = "go-mod-graph";
+              nativeBuildInputs = [ curl ];
+              SSL_CERT_FILE = "${cacert}/etc/ssl/certs/ca-bundle.crt";
+              impureEnvVars = lib.fetchers.proxyImpureEnvVars ++ [ "GOPROXY" ];
+              mods = lockFile.graph.mods or [ ];
+              buildCommand = ''
+                proxy="''${GOPROXY:-https://proxy.golang.org}"
+                proxy="''${proxy%%,*}"
+                export proxy out
+                for mod in $mods; do echo "$mod"; done \
+                  | xargs -P 16 -I '{}' sh -c \
+                      'mkdir -p "$out/$(dirname "$1")" && curl -fsSL --retry 3 "$proxy/$1" -o "$out/$1"' _ '{}'
+              '';
+              outputHashMode = "recursive";
+              outputHashAlgo = null;
+              outputHash = lockFile.graph.hash or lib.fakeHash;
+            }
+          ) { };
         }
         //
           # Create a package per Go _module_

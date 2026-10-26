@@ -27,6 +27,10 @@ var workspaceGOOS = []string{"linux", "darwin"}
 type goWorkspaceLock struct {
 	Require     []string `toml:"require,omitempty"`
 	TestRequire []string `toml:"testRequire,omitempty"`
+	// Modules whose sources Go reads when running this module in workspace
+	// mode: every locked module whose path is a prefix of an imported package
+	// (Go checks them for ambiguous imports), not only the providers.
+	Sources []string `toml:"sources,omitempty"`
 }
 
 type goListDep struct {
@@ -142,14 +146,16 @@ func analyzeWorkspace(directory string, lock *lockFile) error {
 
 		require := make(map[string]struct{})
 		testRequire := make(map[string]struct{})
+		imported := make(map[string]struct{})
 		for _, goos := range workspaceGOOS {
 			prod, err := listDeps(directory, dir, goos, false, imports)
 			if err != nil {
 				return err
 			}
 			addPackages(prod)
-			for _, modPath := range prod {
+			for importPath, modPath := range prod {
 				require[modPath] = struct{}{}
+				imported[importPath] = struct{}{}
 			}
 
 			test, err := listDeps(directory, dir, goos, true, imports)
@@ -157,8 +163,19 @@ func analyzeWorkspace(directory string, lock *lockFile) error {
 				return err
 			}
 			addPackages(test)
-			for _, modPath := range test {
+			for importPath, modPath := range test {
 				testRequire[modPath] = struct{}{}
+				imported[importPath] = struct{}{}
+			}
+		}
+
+		sources := make(map[string]struct{})
+		for modPath := range lock.Locked {
+			for importPath := range imported {
+				if importPath == modPath || strings.HasPrefix(importPath, modPath+"/") {
+					sources[modPath] = struct{}{}
+					break
+				}
 			}
 		}
 
@@ -169,6 +186,7 @@ func analyzeWorkspace(directory string, lock *lockFile) error {
 		lock.Workspace[dir] = &goWorkspaceLock{
 			Require:     sortedKeys(require),
 			TestRequire: sortedKeys(testRequire),
+			Sources:     sortedKeys(sources),
 		}
 	}
 

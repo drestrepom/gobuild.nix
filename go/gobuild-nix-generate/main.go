@@ -50,6 +50,7 @@ type lockFile struct {
 	Locked    map[string]*goModuleLock    `toml:"locked"`
 	Package   map[string]*goPackageLock   `toml:"package,omitempty"`
 	Workspace map[string]*goWorkspaceLock `toml:"workspace,omitempty"`
+	Graph     *goGraphLock                `toml:"graph,omitempty"`
 }
 
 //go:embed fetcher.nix
@@ -81,6 +82,7 @@ func createLock(directory string, workers int, pkgsFlag string, attrFlag string)
 
 	// If we have a previous lock file re-use hashes instead of re-computing them if the package/version is the same
 	prevHashes := make(map[string]string)
+	var prevGraph *goGraphLock
 	if _, err := os.Stat(filepath.Join(directory, LOCK_FILE)); err == nil {
 		contents, err := os.ReadFile(filepath.Join(directory, LOCK_FILE))
 		if err != nil {
@@ -93,6 +95,7 @@ func createLock(directory string, workers int, pkgsFlag string, attrFlag string)
 			for goPackagePath, locked := range prevLock.Locked {
 				prevHashes[fmt.Sprintf("%s@%s", goPackagePath, locked.Version)] = locked.Hash
 			}
+			prevGraph = prevLock.Graph
 		}
 	}
 
@@ -308,6 +311,13 @@ func createLock(directory string, workers int, pkgsFlag string, attrFlag string)
 	// graph, so it runs before decycling.
 	if err := analyzeWorkspace(directory, lock); err != nil {
 		return nil, err
+	}
+	if lock.Workspace != nil {
+		graph, err := analyzeGraph(directory, prevGraph)
+		if err != nil {
+			return nil, err
+		}
+		lock.Graph = graph
 	}
 
 	// Decycle the dependency graph
