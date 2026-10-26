@@ -18,6 +18,10 @@ goConfigurePhase() {
   # directory, so without this no build hits the cache of its inputs.
   export GOFLAGS="-trimpath${GOFLAGS:+ $GOFLAGS}"
 
+  # cgo is part of a package's cache key too (it selects files of net, os/user,
+  # runtime/cgo...): std, modules and apps must agree. Static by default.
+  export CGO_ENABLED="${CGO_ENABLED:-0}"
+
   runHook postConfigure
   echo "Finished executing goConfigurePhase"
 }

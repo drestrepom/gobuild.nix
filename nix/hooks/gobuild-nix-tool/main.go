@@ -337,7 +337,11 @@ func installGoCmd() error {
 	}
 
 	var installFlags []string
-	value, ok := os.LookupEnv("goInstalllags")
+	value, ok := os.LookupEnv("goInstallFlags")
+	if !ok {
+		// Historical misspelling, kept for compatibility.
+		value, ok = os.LookupEnv("goInstalllags")
+	}
 	if ok {
 		installFlags = strings.Fields(value)
 	}
