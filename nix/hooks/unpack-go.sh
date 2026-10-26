@@ -22,6 +22,9 @@ goUnpackPhase() {
   @tool@ unpackGo
 
   pushd src > /dev/null
+  if [ -n "${goModuleDir-}" ]; then
+    cd "$goModuleDir"
+  fi
 
   runHook postUnpack
   echo "Finished executing goUnpackPhase"

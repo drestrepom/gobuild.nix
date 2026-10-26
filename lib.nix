@@ -43,7 +43,19 @@ in
                     fetchers,
                     hooks,
                   }:
-                  stdenv.mkDerivation {
+                  let
+                    # Same rule as a single module (see below), over the union
+                    # of the packages the workspace imports from each member.
+                    packages = concatMap (goPackagePath: lockFile.locked.${goPackagePath}.packages or [ ]) cycle;
+                  in
+                  stdenv.mkDerivation (
+                  lib.optionalAttrs (lockFile ? workspace) (
+                    if packages == [ ] then
+                      { dontUseGoBuild = true; }
+                    else
+                      { env.goBuildPackages = builtins.concatStringsSep " " packages; }
+                  )
+                  // {
                     name = "go-cycle-${cycleIdx}";
 
                     srcs = map (
@@ -69,7 +81,7 @@ in
                       concatMap (req: if elem req cycle then [ ] else [ final.${req} ]) (locked.require or [ ])
                     ) cycle;
 
-                  }
+                  })
                 ) { }
               )
               (
@@ -85,6 +97,13 @@ in
           inherit cycles;
 
           require = map (goPackagePath: final.${goPackagePath}) (attrNames lockFile.locked);
+
+          # Third-party modules each workspace `use` module needs, by its
+          # directory relative to go.work (see workspace.go in the generator).
+          workspace = mapAttrs (dir: ws: {
+            require = map (goPackagePath: final.${goPackagePath}) (ws.require or [ ]);
+            testRequire = map (goPackagePath: final.${goPackagePath}) (ws.testRequire or [ ]);
+          }) (lockFile.workspace or { });
         }
         //
           # Create a package per Go _module_
@@ -96,7 +115,8 @@ in
                 fetchers,
                 hooks,
               }:
-              stdenv.mkDerivation {
+              stdenv.mkDerivation (
+              {
                 name = goPackagePath;
                 inherit (locked) version;
 
@@ -110,6 +130,18 @@ in
                   inherit cyclePkgs;
                 };
 
+                # A workspace lock records which packages are imported from
+                # each module: build only those instead of `<module>/...`. A
+                # module nothing imports is only needed for its go.mod.
+              }
+              // lib.optionalAttrs (locked ? packages || lockFile ? workspace) (
+                if (locked.packages or [ ]) == [ ] then
+                  { dontUseGoBuild = true; }
+                else
+                  { env.goBuildPackages = builtins.concatStringsSep " " locked.packages; }
+              )
+              // {
+
                 nativeBuildInputs = [
                   hooks.goModuleHook
                 ];
@@ -118,7 +150,7 @@ in
                   locked.require or [ ]
                 );
 
-              }
+              })
             ) { })
           ) lockFile.locked
         //

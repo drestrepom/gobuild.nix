@@ -32,6 +32,9 @@ type goModuleLock struct {
 	Version string   `toml:"version"`
 	Hash    string   `toml:"hash"`
 	Require []string `toml:"require,omitempty"`
+	// Packages the workspace imports from this module. When set, only these
+	// are built instead of `<module>/...` (see workspace.go).
+	Packages []string `toml:"packages,omitempty"`
 }
 
 // Local Go package
@@ -42,10 +45,11 @@ type goPackageLock struct {
 
 // Map goPackagePath -> lock entry
 type lockFile struct {
-	Schema  int                       `toml:"schema"`
-	Cycles  map[string]int            `toml:"cycles,omitempty"`
-	Locked  map[string]*goModuleLock  `toml:"locked"`
-	Package map[string]*goPackageLock `toml:"package,omitempty"`
+	Schema    int                         `toml:"schema"`
+	Cycles    map[string]int              `toml:"cycles,omitempty"`
+	Locked    map[string]*goModuleLock    `toml:"locked"`
+	Package   map[string]*goPackageLock   `toml:"package,omitempty"`
+	Workspace map[string]*goWorkspaceLock `toml:"workspace,omitempty"`
 }
 
 //go:embed fetcher.nix
@@ -298,6 +302,12 @@ func createLock(directory string, workers int, pkgsFlag string, attrFlag string)
 			_, ok := lock.Locked[requirement]
 			return ok
 		})
+	}
+
+	// Workspace analysis may replace module requirements with the import
+	// graph, so it runs before decycling.
+	if err := analyzeWorkspace(directory, lock); err != nil {
+		return nil, err
 	}
 
 	// Decycle the dependency graph

@@ -512,30 +512,40 @@ func unpackGo() error {
 	{
 		// Unpack a local `src` package if it's provided.
 		// If we're only building Go proxy sources create a dummy intermediate module that we can build inside.
+		// `goModuleDir` is the module's directory inside `src`, for a module
+		// that lives in a bigger tree (a workspace whose modules use local
+		// `replace` directives). The whole tree is copied so those resolve.
+		moduleDir := os.Getenv("goModuleDir")
+
 		srcDir, ok := os.LookupEnv("src")
-		if ok && fileExists(filepath.Join(srcDir, "go.mod")) || fileExists(filepath.Join(srcDir, "go.work")) {
+		if ok && fileExists(filepath.Join(srcDir, moduleDir, "go.mod")) || fileExists(filepath.Join(srcDir, "go.work")) {
 			err = copyDir(srcDir, SRC_DIR, "go.mod", moduleVersions)
 			if err != nil {
 				return err
 			}
 
 			// Go mod download local dependencies only if we're in a local tree
-			modPath := filepath.Join(SRC_DIR, "go.mod")
+			modPath := filepath.Join(SRC_DIR, moduleDir, "go.mod")
 			if fileExists(modPath) {
 				mod, err := readMod(modPath)
 				if err != nil {
 					return err
 				}
 
-				require := make([]string, len(mod.Require))
-				for i, req := range mod.Require {
-					require[i] = req.Mod.Path
+				// Inside a workspace the go.mod also lists modules only its
+				// tests (or other platforms) need, which may not be inputs of
+				// this build: download only those that are.
+				require := make([]string, 0, len(mod.Require))
+				for _, req := range mod.Require {
+					if _, ok := moduleVersions[req.Mod.Path]; ok || moduleDir == "" {
+						require = append(require, req.Mod.Path)
+					}
 				}
 
 				cmd := exec.Command("go", append([]string{"mod", "download"}, require...)...)
 				cmd.Stdout = os.Stdout
 				cmd.Stderr = os.Stderr
-				cmd.Dir = SRC_DIR
+				cmd.Dir = filepath.Join(SRC_DIR, moduleDir)
 				if err = cmd.Run(); err != nil {
 					return err
 				}

@@ -32,7 +32,9 @@ lib.makeScope newScope (
         inherit (go) pname version;
         dontUnpack = true;
 
-        goBuildPackages = "...";
+        # Only the standard library: `...` in GOROOT also compiles cmd/* (the
+        # toolchain itself), which nothing links against.
+        goBuildPackages = "std";
 
         nativeBuildInputs = [
           hooks.configureGoCache
